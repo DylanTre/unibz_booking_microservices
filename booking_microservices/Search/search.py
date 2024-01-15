@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request, jsonify
 import requests
 import sqlite3
 
