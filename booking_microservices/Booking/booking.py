@@ -9,7 +9,13 @@ import json
 
 app = Flask(__name__)
 
-debug = False
+_bookingExchange = 'booking'
+_apartmentExchange = 'apartment'
+_rabbitmqHost = 'rabbitmq'
+_dbnmae = 'test.db'
+
+def connect_to_db():
+    return sqlite3.connect(_dbnmae)
 
 @app.route('/')
 def home():
@@ -24,10 +30,10 @@ def add():
     who = request.args.get('who')
 
     # Connect to database
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
     print ("Opened database successfully")
 
-    id = uuid.uuid4()
+    id = str(uuid.uuid4())
 
     # Execute query
     conn.execute("INSERT INTO BOOKINGS (ID, APARTMENTID, FROMDATE, TODATE, WHO) VALUES (?, ?, ?, ?, ?)",
@@ -45,10 +51,9 @@ def add():
         'to': toDate,
         'who': who
     }
-    if not debug:
-        postBookingChange(jsonify(booking))
-    else:
-        return jsonify(booking)
+
+    postBookingChange(json.dumps(booking))
+    return json.dumps(booking)
 
 
 #api: /cancel?id=123
@@ -56,7 +61,7 @@ def add():
 def cancel():
     id = request.args.get('id')
     print(id)
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
     conn.execute("DELETE FROM BOOKINGS WHERE ID = ?", (id,))
     conn.commit()
     conn.close()
@@ -65,10 +70,9 @@ def cancel():
         'type': 'cancel',
         'id': id
     }
-    if not debug:
-        postBookingChange(jsonify(booking))
-    else:
-        return jsonify(booking)
+
+    postBookingChange(json.dumps(booking))
+    return json.dumps(booking)
 
 
 #api: /change?id=d6727483-16fc-4fe4-bc7f-20dfb8d6a502&from=20240101&to=20240102
@@ -77,7 +81,7 @@ def change():
     id = request.args.get('id')
     fromDate = request.args.get('from')
     toDate = request.args.get('to')
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
     conn.execute("UPDATE BOOKINGS SET FROMDATE = ?, TODATE = ? WHERE ID = ?", (fromDate, toDate, id))
     conn.commit()
     conn.close()
@@ -89,17 +93,15 @@ def change():
         'from': fromDate,
         'to': toDate
     }
-    if not debug:
-        postBookingChange(jsonify(booking))
-    else:
-        return jsonify(booking)
+    postBookingChange(json.dumps(booking))
+    return json.dumps(booking)
 
 
 
 @app.route('/list')
 def list():
     # Connect to database
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
     print ("Opened database successfully")
 
     # Execute query
@@ -119,82 +121,64 @@ def list():
     # Close connection
     conn.close()
 
-    return jsonify(bookings)
-
-
-def postBookingChange(message):
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
-    channel = connection.channel()
-    channel.exchange_declare(exchange='booking', exchange_type=ExchangeType.fanout)
-    channel.basic_publish(exchange='booking', routing_key='', body=message)
-    print(f"sent message: {message}")
-    connection.close()
+    return json.dumps(bookings)
 
 
 def handleApartmentChange(ch, method, properties, body):
-    # body is a json string
-    print(f"received message: {body}")
+    conn = connect_to_db()
     apartment = json.loads(body)
     if apartment['type'] == 'add':
-        conn = sqlite3.connect('test.db')
         conn.execute("INSERT INTO APARTMENTS (ID) VALUES (?)", (apartment['id'],))
         conn.commit()
-        conn.close()
     elif apartment['type'] == 'delete':
-        conn = sqlite3.connect('test.db')
         conn.execute("DELETE FROM APARTMENTS WHERE ID = ?", (apartment['id'],))
         conn.commit()
-        conn.close()
     else:
         print("unknown message")
+    conn.close()
 
 def postBookingChange(message):
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(_rabbitmqHost))
     channel = connection.channel()
-    channel.exchange_declare(exchange='booking', exchange_type=ExchangeType.fanout)
-    channel.basic_publish(exchange='booking', routing_key='', body=message)
+    channel.exchange_declare(exchange=_bookingExchange, exchange_type=ExchangeType.fanout)
+    channel.basic_publish(exchange=_bookingExchange, routing_key='', body=message)
     connection.close()
 
 def listenForApartmentChanges():
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(_rabbitmqHost))
     channel = connection.channel()
-    channel.exchange_declare(exchange='apartment', exchange_type=ExchangeType.fanout)
+    channel.exchange_declare(exchange=_apartmentExchange, exchange_type=ExchangeType.fanout)
     result = channel.queue_declare(queue='', exclusive=True)
     queue_name = result.method.queue
-    channel.queue_bind(exchange='apartment', queue=queue_name)
+    channel.queue_bind(exchange=_apartmentExchange, queue=queue_name)
     channel.basic_consume(queue=queue_name, on_message_callback=handleApartmentChange, auto_ack=True)
     channel.start_consuming()
 
 def init():
-    # Connect to database
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
 
-    # Create table if not exists for apartments
+    conn.execute("DROP TABLE IF EXISTS APARTMENTS")
+    conn.commit()
+
     conn.execute('''CREATE TABLE IF NOT EXISTS APARTMENTS
                       (ID TEXT PRIMARY KEY NOT NULL)''')
 
-    # Create table if not exists for bookings
     conn.execute('''CREATE TABLE IF NOT EXISTS BOOKINGS
                       (ID TEXT PRIMARY KEY NOT NULL,
                        APARTMENTID TEXT NOT NULL,
                        FROMDATE TEXT NOT NULL,
                        TODATE TEXT NOT NULL,
                        WHO TEXT NOT NULL)''')
-    if not debug:
-        apartmentjson = requests.get("http://apartment:5000/list").json()
-        for apartment in apartmentjson:
-            conn.execute("INSERT INTO APARTMENTS (ID) VALUES (?)", (apartment['id'],))
 
+    apartmentjson = requests.get("http://apartment:5000/list").json()
+    for apartment in apartmentjson:
+        conn.execute("INSERT INTO APARTMENTS (ID) VALUES (?)", (apartment['id'],))
 
-    # Commit changes
     conn.commit()
     conn.close()
 
 if __name__ == '__main__':
     init()
-    if not debug:
-        t = threading.Thread(target=listenForApartmentChanges)
-        t.start()
-        app.run(host="0.0.0.0", port=5000)
-    else:
-       app.run(host="0.0.0.0", port=5007)
+    t = threading.Thread(target=listenForApartmentChanges)
+    t.start()
+    app.run(host="0.0.0.0", port=5000)

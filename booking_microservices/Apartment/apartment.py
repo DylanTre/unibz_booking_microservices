@@ -9,14 +9,18 @@ from pika.exchange_type import ExchangeType
 
 app = Flask(__name__)
 
-debug = False
+_apartmentExchange = 'apartment'
+_rabbitmqHost = 'rabbitmq'
+_dbnmae = 'search.db'
+
+def connect_to_db():
+    return sqlite3.connect(_dbnmae)
 
 @app.route('/')
 def home():
     return "hello! this is the apartment service"
 
-
-#api: /add?name=onewtwosevethree&address=RockerfellerStreet&noiselevel=10&floor=2
+#api: /add?name=1273a&address=RockerfellerStreet&noiselevel=10&floor=3
 @app.route('/add')
 def add():
     name = request.args.get('name')
@@ -24,21 +28,14 @@ def add():
     noiselevel = request.args.get('noiselevel')
     floor = request.args.get('floor')
 
-    #generate UUID for the given parameters
-    id = uuid.uuid4()
+    id = str(uuid.uuid4())
 
-    #add to database
-    conn = sqlite3.connect('test.db')
-    print ("Opened database successfully")
-
+    conn = connect_to_db()
     conn.execute("INSERT INTO APARTMENTS (ID, NAME, ADDRESS, NOISE, FLOOR) VALUES (?, ?, ?, ?, ?)",
                  (str(id), name, address, noiselevel, floor))
-
     conn.commit()
-    print ("Records created successfully")
     conn.close()
 
-    #entry to json
     apartment = {
         'type': 'add',
         'id': id,
@@ -47,54 +44,49 @@ def add():
         'noiselevel': noiselevel,
         'floor': floor
     }
-    postApartmentChange(jsonify(apartment))
+    postApartmentChange(json.dumps(apartment))
 
-    return "added: " + jsonify(apartment)
+    return "added: " + json.dumps(apartment)
 
 
 @app.route('/remove')
 def remove():
     id = request.args.get('id')
-
-    conn = sqlite3.connect('test.db')
-    print ("Opened database successfully")
+    conn = connect_to_db()
     conn.execute("DELETE FROM APARTMENTS WHERE ID = ?", (id,))
     conn.commit()
-    print ("Record deleted successfully")
     conn.close()
 
-    #entry to json
     apartment = {
         'type': 'delete',
-        'id': id
+        'id': str(id)
     }
 
-    postApartmentChange(jsonify(apartment))
-
+    postApartmentChange(json.dumps(apartment))
     return "deleted: " + str(id)
 
 @app.route('/list', methods=['GET'])
 def list():
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
     print ("Opened database successfully")
     cursor = conn.execute("SELECT * FROM APARTMENTS")
     rows = cursor.fetchall()
     apartments = [{'id': row[0], 'name': row[1], 'address': row[2], 'noiselevel': row[3], 'floor': row[4]} for row in rows]
     conn.close()
-    return jsonify(apartments)
+    return json.dumps(apartments)
 
 
 def postApartmentChange(message):
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(_rabbitmqHost))
     channel = connection.channel()
-    channel.exchange_declare(exchange='apartment', exchange_type=ExchangeType.fanout)
-    channel.basic_publish(exchange='apartment', routing_key='', body=message)
+    channel.exchange_declare(exchange=_apartmentExchange, exchange_type=ExchangeType.fanout)
+    channel.basic_publish(exchange=_apartmentExchange, routing_key='', body=message)
     print(f"sent message: {message}")
     connection.close()
 
 
 def init():
-    conn = sqlite3.connect('test.db')
+    conn = connect_to_db()
     conn.execute('''CREATE TABLE IF NOT EXISTS APARTMENTS
                   (ID TEXT PRIMARY KEY NOT NULL,
                    NAME TEXT NOT NULL,
@@ -103,13 +95,10 @@ def init():
                    FLOOR INTEGER NOT NULL)''')
 
     conn.commit()
+    conn.close()
 
 
-
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     init()
-    if not debug:
-        app.run(host="0.0.0.0", port=5000)
-    else:
-        app.run(host="0.0.0.0", port=5006)
+    app.run(host="0.0.0.0", port=5000)
+
