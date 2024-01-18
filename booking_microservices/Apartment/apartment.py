@@ -13,7 +13,7 @@ def home():
     return "hello! this is the apartment service"
 
 
-#api: /add?name=(string)&address=(string)&noiselevel=(number)&floor=(number)
+#api: /add?name=onewtwosevethree&address=RockerfellerStreet&noiselevel=10&floor=2
 @app.route('/add')
 def add():
     name = request.args.get('name')
@@ -21,54 +21,45 @@ def add():
     noiselevel = request.args.get('noiselevel')
     floor = request.args.get('floor')
 
-    #generate UUID
+    #generate UUID for the given parameters
     id = uuid.uuid4()
 
     #add to database
     conn = sqlite3.connect('test.db')
     print ("Opened database successfully")
 
-    conn.execute("INSERT INTO APARTMENTS (ID,NAME,ADDRESS,NOISE,FLOOR) \
-        VALUES ("+ id +", "+ name +", "+ address +", "+ noiselevel +","+ floor +" )");
+    conn.execute("INSERT INTO APARTMENTS (ID, NAME, ADDRESS, NOISE, FLOOR) VALUES (?, ?, ?, ?, ?)",
+                 (str(id), name, address, noiselevel, floor))
 
     conn.commit()
     print ("Records created successfully")
     conn.close()
 
-    postApartmentChange("add:"+id)
+    postApartmentChange("add:"+str(id))
 
 
 @app.route('/remove')
 def remove():
     id = request.args.get('id')
 
-    # Remove from database
     conn = sqlite3.connect('test.db')
     print ("Opened database successfully")
-
     conn.execute("DELETE FROM APARTMENTS WHERE ID = ?", (id,))
-
     conn.commit()
     print ("Record deleted successfully")
     conn.close()
 
-    postApartmentChange("delete:"+id)
+    postApartmentChange("delete:"+str(id))
 
 
 @app.route('/list', methods=['GET'])
 def list():
-    # Connect to database
     conn = sqlite3.connect('test.db')
     print ("Opened database successfully")
-    # Execute query
     cursor = conn.execute("SELECT * FROM APARTMENTS")
-    # Fetch all rows
     rows = cursor.fetchall()
-    # Convert rows to list of dictionaries for JSON serialization
     apartments = [{'id': row[0], 'name': row[1], 'address': row[2], 'noiselevel': row[3], 'floor': row[4]} for row in rows]
-    # Close connection
     conn.close()
-    # Return JSON response
     return jsonify(apartments)
 
 
@@ -83,16 +74,14 @@ def postApartmentChange(message):
 
 def init():
     conn = sqlite3.connect('test.db')
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS APARTMENTS
+    conn.execute('''CREATE TABLE IF NOT EXISTS APARTMENTS
                   (ID TEXT PRIMARY KEY NOT NULL,
                    NAME TEXT NOT NULL,
                    ADDRESS TEXT NOT NULL,
                    NOISE INTEGER NOT NULL,
                    FLOOR INTEGER NOT NULL)''')
 
-    cursor.commit()
-    cursor.close()
+    conn.commit()
 
 
 
