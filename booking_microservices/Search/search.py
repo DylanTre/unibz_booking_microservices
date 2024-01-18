@@ -3,12 +3,17 @@ import requests
 import sqlite3
 import pika
 import threading
+from pika.exchange_type import ExchangeType
+import json
+
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "hello! this is the search service"
 
-@api.route('/search', methods=['GET'])
+#api: /search?from=20200101&to=20200105
+@app.route('/search', methods=['GET'])
 def search():
     fromDate = request.args.get('from')
     toDate = request.args.get('to')
@@ -36,24 +41,92 @@ def search():
 
     return jsonify(apartments)
 
+
+
+
+@app.route('/debugapartments', methods=['GET'])
+def debug():
+    conn = sqlite3.connect('test.db')
+    print ("Opened database successfully")
+    cursor = conn.execute("SELECT * FROM APARTMENTS")
+    rows = cursor.fetchall()
+    apartments = [{'id': row[0], 'name': row[1], 'address': row[2], 'noiselevel': row[3], 'floor': row[4]} for row in rows]
+    conn.close()
+    return jsonify(apartments)
+
+@app.route('/debugbookings', methods=['GET'])
+def debug2():
+    # Connect to database
+    conn = sqlite3.connect('test.db')
+    print ("Opened database successfully")
+
+    # Execute query
+    cursor = conn.execute("SELECT * FROM BOOKINGS")
+
+    # Create list of bookings
+    bookings = []
+    for row in cursor:
+        bookings.append({
+            'id': row[0],
+            'apartmentid': row[1],
+            'from': row[2],
+            'to': row[3],
+            'who': row[4]
+        })
+
+    # Close connection
+    conn.close()
+
+    return jsonify(bookings)
+
+msg = ""
+@app.route('/debug', methods=['GET'])
+def debug3():
+    return msg
+
+
 def handleApartmentChange(ch, method, properties, body):
+    # body is a json string
+    global msg
+    msg = body
     print(f"received message: {body}")
-    if body.startswith("add:"):
-        apartmentId = body[4:]
+    apartment = json.loads(body)
+    if apartment['type'] == 'add':
         conn = sqlite3.connect('test.db')
-        conn.execute("INSERT INTO APARTMENTS (ID) VALUES (?)", (apartmentId,))
+        conn.execute("INSERT INTO APARTMENTS (ID,NAME,ADDRESS,NOISE,FLOOR) VALUES (?,?,?,?,?)",
+                     (apartment['id'], apartment['name'], apartment['address'], apartment['noiselevel'], apartment['floor']))
         conn.commit()
         conn.close()
-
-    elif body.startswith("delete:"):
-        apartmentId = body[7:]
+    elif apartment['type'] == 'delete':
         conn = sqlite3.connect('test.db')
-        conn.execute("DELETE FROM APARTMENTS WHERE ID = ?", (apartmentId,))
+        conn.execute("DELETE FROM APARTMENTS WHERE ID = ?", (apartment['id'],))
         conn.commit()
         conn.close()
-
     else:
         print("unknown message")
+
+def handleBookingChange(ch, method, properties, body):
+    # body is a json string
+    print(f"received message: {body}")
+    booking = json.loads(body)
+    if booking['type'] == 'add':
+        conn = sqlite3.connect('test.db')
+        conn.execute("INSERT INTO BOOKINGS (ID,APARTMENTID,FROMDATE,TODATE,WHO) VALUES (?,?,?,?,?)", (booking['id'], booking['apartmentId'], booking['from'], booking['to'], booking['who']))
+        conn.commit()
+        conn.close()
+    elif booking['type'] == 'cancel':
+        conn = sqlite3.connect('test.db')
+        conn.execute("DELETE FROM BOOKINGS WHERE ID = ?", (booking['id'],))
+        conn.commit()
+        conn.close()
+    elif booking['type'] == 'change':
+        conn = sqlite3.connect('test.db')
+        conn.execute("UPDATE BOOKINGS SET FROMDATE = ?, TODATE = ? WHERE ID = ?", (booking['from'], booking['to'], booking['id']))
+        conn.commit()
+        conn.close()
+    else:
+        print("unknown message")
+
 
 def listenForApartmentChanges():
     connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
@@ -80,15 +153,16 @@ def init():
     print ("Opened database successfully")
 
     conn.execute('''CREATE TABLE IF NOT EXISTS APARTMENTS
-                  (ID INTEGER PRIMARY KEY NOT NULL,
+                  (ID TEXT PRIMARY KEY NOT NULL,
                    NAME TEXT NOT NULL,
                    ADDRESS TEXT NOT NULL,
                    NOISE INTEGER NOT NULL,
                    FLOOR INTEGER NOT NULL)''')
+    conn.commit()
 
     conn.execute('''CREATE TABLE IF NOT EXISTS BOOKINGS
-                  (ID INTEGER PRIMARY NOT NULL,
-                   APARTMENTID INTEGER NOT NULL,
+                  (ID TEXT PRIMARY KEY NOT NULL,
+                   APARTMENTID TEXT NOT NULL,
                    FROMDATE TEXT NOT NULL,
                    TODATE TEXT NOT NULL,
                    WHO TEXT NOT NULL)''')
@@ -97,11 +171,14 @@ def init():
     conn.close()
 
     apartmentjson = requests.get('http://apartment:5000/list').json()
+
     for apartment in apartmentjson:
-        conn = sqlite3.connect('test.db')
-        conn.execute("INSERT INTO APARTMENTS (ID,NAME,ADDRESS,NOISE,FLOOR) VALUES (?,?,?,?,?)", (apartment['id'], apartment['name'], apartment['address'], apartment['noiselevel'], apartment['floor']))
-        conn.commit()
-        conn.close()
+        if not apartment['id'] is None:
+            conn = sqlite3.connect('test.db')
+            conn.execute("INSERT INTO APARTMENTS (ID,NAME,ADDRESS,NOISE,FLOOR) VALUES (?,?,?,?,?)",
+                         (apartment['id'], apartment['name'], apartment['address'], apartment['noiselevel'], apartment['floor']))
+            conn.commit()
+            conn.close()
 
     bookingjson = requests.get('http://booking:5000/list').json()
     for booking in bookingjson:
@@ -109,6 +186,8 @@ def init():
         conn.execute("INSERT INTO BOOKINGS (ID,APARTMENTID,FROMDATE,TODATE,WHO) VALUES (?,?,?,?,?)", (booking['id'], booking['apartmentId'], booking['fromDate'], booking['toDate'], booking['who']))
         conn.commit()
         conn.close()
+
+
 
 if __name__ == '__main__':
     init()
@@ -119,3 +198,4 @@ if __name__ == '__main__':
     t2.start()
 
     app.run(host="0.0.0.0", port=5000)
+

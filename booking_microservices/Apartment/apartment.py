@@ -4,9 +4,12 @@ import sqlite3
 import pika
 import uuid
 import json
+from pika.exchange_type import ExchangeType
+
 
 app = Flask(__name__)
 
+debug = False
 
 @app.route('/')
 def home():
@@ -35,7 +38,18 @@ def add():
     print ("Records created successfully")
     conn.close()
 
-    postApartmentChange("add:"+str(id))
+    #entry to json
+    apartment = {
+        'type': 'add',
+        'id': id,
+        'name': name,
+        'address': address,
+        'noiselevel': noiselevel,
+        'floor': floor
+    }
+    postApartmentChange(jsonify(apartment))
+
+    return "added: " + jsonify(apartment)
 
 
 @app.route('/remove')
@@ -49,8 +63,15 @@ def remove():
     print ("Record deleted successfully")
     conn.close()
 
-    postApartmentChange("delete:"+str(id))
+    #entry to json
+    apartment = {
+        'type': 'delete',
+        'id': id
+    }
 
+    postApartmentChange(jsonify(apartment))
+
+    return "deleted: " + str(id)
 
 @app.route('/list', methods=['GET'])
 def list():
@@ -88,4 +109,7 @@ def init():
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     init()
-    app.run(host="0.0.0.0", port=5000)
+    if not debug:
+        app.run(host="0.0.0.0", port=5000)
+    else:
+        app.run(host="0.0.0.0", port=5006)
