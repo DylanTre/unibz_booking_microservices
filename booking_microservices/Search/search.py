@@ -160,7 +160,7 @@ def init():
 
     bookingjson = requests.get('http://booking:5000/list').json()
     for booking in bookingjson:
-        conn.execute("INSERT INTO BOOKINGS (ID,APARTMENTID,FROMDATE,TODATE,WHO) VALUES (?,?,?,?,?)", (booking['id'], booking['apartmentid'], booking['fromDate'], booking['toDate'], booking['who']))
+        conn.execute("INSERT INTO BOOKINGS (ID,APARTMENTID,FROMDATE,TODATE,WHO) VALUES (?,?,?,?,?)", (booking['id'], booking['apartmentid'], booking['from'], booking['to'], booking['who']))
         conn.commit()
 
     conn.close()

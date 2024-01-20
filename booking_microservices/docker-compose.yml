@@ -19,10 +19,12 @@ services:
             - "5003:5000"
         depends_on:
             - "booking"
-#    gateway:
-#        build: ./Gateway
-#        ports:
-#            - "5004:5000"
+    gateway:
+        build: ./Gateway
+        ports:
+            - "5004:5000"
+        depends_on:
+            - "search"
     rabbitmq:
         image: rabbitmq:3-management-alpine
         ports:
